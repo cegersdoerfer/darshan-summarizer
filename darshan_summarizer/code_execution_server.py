@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 class CodeExecutionServer:
     """MCP server for code execution"""
     
-    def __init__(self, working_dir: Optional[str] = None):
+    def __init__(self, working_dir: Optional[str] = None, kernel: Optional[JupyterKernel] = None):
         self.working_dir = working_dir
-        self.kernel: Optional[JupyterKernel] = None
+        self.kernel: Optional[JupyterKernel] = kernel  # Allow passing existing kernel
         self.mcp = FastMCP(
             name="code_execution",
             instructions="Execute Python and shell code through a Jupyter kernel"
@@ -104,16 +104,17 @@ class CodeExecutionServer:
         return self.mcp
 
 
-def create_code_execution_server(working_dir: Optional[str] = None) -> FastMCP:
+def create_code_execution_server(working_dir: Optional[str] = None, kernel: Optional[JupyterKernel] = None) -> FastMCP:
     """
     Create a code execution MCP server.
     
     Args:
         working_dir: Working directory for code execution
+        kernel: Optional existing JupyterKernel instance to use
         
     Returns:
         FastMCP server instance
     """
-    server = CodeExecutionServer(working_dir=working_dir)
+    server = CodeExecutionServer(working_dir=working_dir, kernel=kernel)
     return server.get_server()
 

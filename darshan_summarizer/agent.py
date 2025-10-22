@@ -23,7 +23,8 @@ from .code_execution_server import create_code_execution_server
 def init_pocket_agent(
     model: str = "gpt-4o",
     working_dir: Optional[str] = None,
-    system_prompt: Optional[str] = None
+    system_prompt: Optional[str] = None,
+    kernel = None
 ) -> PocketAgent:
     """
     Initialize a PocketAgent instance for code execution.
@@ -32,12 +33,13 @@ def init_pocket_agent(
         model: LLM model to use (default: "gpt-4o")
         working_dir: Working directory for code execution
         system_prompt: Optional system prompt for the agent
+        kernel: Optional existing JupyterKernel instance
         
     Returns:
         Configured PocketAgent instance
     """
-    # Create code execution MCP server
-    mcp_server = create_code_execution_server(working_dir=working_dir)
+    # Create code execution MCP server with optional kernel
+    mcp_server = create_code_execution_server(working_dir=working_dir, kernel=kernel)
     
     # Create agent config
     config = AgentConfig(
@@ -99,6 +101,7 @@ class DarshanSummarizerAgent:
         
         # Agent will be initialized after parsing (when we know the working directory)
         self.agent: Optional[PocketAgent] = None
+        self.kernel = None  # Store reference to the Jupyter kernel
         
         # State variables
         self.darshan_modules: List[str] = []
@@ -127,11 +130,19 @@ class DarshanSummarizerAgent:
         self.darshan_modules = list_darshan_modules(self.output_dir)
         print(f"\nFound {len(self.darshan_modules)} Darshan modules")
         
-        # Initialize the agent now that we have the output directory
-        print("\nInitializing analysis agent...")
+        # Initialize the Jupyter kernel
+        print("\nInitializing Jupyter kernel...")
+        from .jupyter_kernel import JupyterKernel
+        self.kernel = JupyterKernel(working_dir=self.output_dir)
+        asyncio.run(self.kernel.start())
+        print("✓ Kernel started")
+        
+        # Initialize the agent with the kernel
+        print("Initializing analysis agent...")
         self.agent = init_pocket_agent(
             model=self.model,
-            working_dir=self.output_dir
+            working_dir=self.output_dir,
+            kernel=self.kernel
         )
         print("✓ Agent initialized")
         
@@ -183,11 +194,18 @@ class DarshanSummarizerAgent:
         print("STEP 2: Analyzing Darshan Log")
         print(f"{'='*60}\n")
         
-        if not self.agent:
+        if not self.agent or not self.kernel:
             raise RuntimeError("Agent not initialized. Call parse_log() first.")
         
         # Prepare setup code
         setup_code = self._prepare_setup_code()
+        
+        # Execute setup code directly in the kernel
+        print("Loading data into Jupyter kernel...")
+        result = asyncio.run(self.kernel.execute(setup_code, language="python"))
+        if not result.success:
+            raise RuntimeError(f"Failed to load data: {result.error}")
+        print("✓ Data loaded successfully\n")
         
         # Create analysis prompt
         prompt = create_darshan_analysis_prompt(
@@ -196,7 +214,7 @@ class DarshanSummarizerAgent:
             fs_config_description=self.fs_config_description
         )
         
-        print("\nStarting analysis...")
+        print("Starting analysis...")
         print("-" * 60)
         
         # Run the analysis (async)
@@ -299,16 +317,30 @@ class DarshanSummarizerAgent:
         Returns:
             The answer to the question
         """
-        if not self.agent:
+        if not self.agent or not self.kernel:
             raise RuntimeError("Agent not initialized. Call parse_log() first.")
         
-        # If resetting, create a new agent
+        # If resetting, create a new agent and reload data
         if reset_conversation:
+            # Restart the kernel to clear state
+            asyncio.run(self.kernel.shutdown())
+            asyncio.run(self.kernel.start())
+            
+            # Create new agent with the same kernel
             self.agent = init_pocket_agent(
                 model=self.model,
-                working_dir=self.output_dir
+                working_dir=self.output_dir,
+                kernel=self.kernel
             )
+            
+            # Execute setup code directly in the kernel
             setup_code = self._prepare_setup_code()
+            print("Reloading data into Jupyter kernel...")
+            result = asyncio.run(self.kernel.execute(setup_code, language="python"))
+            if not result.success:
+                raise RuntimeError(f"Failed to reload data: {result.error}")
+            print("✓ Data reloaded\n")
+            
             prompt = create_qa_prompt(question, setup_code, new_environment=True)
         else:
             prompt = create_qa_prompt(question, new_environment=False)
