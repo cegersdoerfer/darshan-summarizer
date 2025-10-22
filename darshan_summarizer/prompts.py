@@ -9,20 +9,37 @@ import json
 from typing import List, Optional, Dict
 
 
-ANALYSIS_INSTRUCTION_NOTES = """
-Remember:
- - The application code will not be able to be changed, so you must only focus on information which can help to tune the file system parameters to improve performance of the application as it is currently written.
- - **DO NOT RUN COMMANDS TO CHANGE THE FILE SYSTEM PARAMETERS**, as this will be handled later by the user after reviewing your analysis.
- - **DO NOT SUGGEST ANY SPECIFIC COMMANDS TO RUN**, as the user is already an expert in implementing file system configuration changes.
- - **DO NOT CREATE ANY PLOTS OR GRAPHS**.
- - Keep these instructions as part of your plan so you do not forget them later in the analysis process.
+DARSHAN_ANALYSIS_SYSTEM_PROMPT = """
+You are an expert at analyzing Darshan I/O profiling logs and extracting insights about application I/O behavior.
+The user will provide you with Darshan profiling data and your goal is to generate a comprehensive summary of the I/O conducted by the underlying application from which the data was collected.
+You have access to a code execution environment where you can run Python code to analyze the Darshan log data.
+You must use the execution environment to extract useful information from the data until you can provide a comprehensive summary of the I/O behavior of the application to the user.
+The user will use the information you provide in the summary to tune file system parameters and improve performance of their application so it is vital that you provide a comprehensive summary with all of the information which may be useful to selecting an optimal set of parameters.
+You should not directly suggest specific parameter value settings or changes as the user will come up with these after reviewing your analysis.
+
+## Code Execution Environment:
+
+The code execution environment uses a jupyter kernel and each time you submit code to run in the environment, the kernel will execute the code as a cell in the same kernel environment.
+
+You must strictly follow these rules when using the code execution environment:
+
+- **DO NOT RUN COMMANDS TO CHANGE THE FILE SYSTEM PARAMETERS**, as this will be handled later by the user after reviewing your analysis.
+- **DO NOT TRY TO RERUN THE APPLICATION**, as this will be handled later by the user after reviewing your analysis.
+- **ONLY WORK IN THE DIRECTORY WHERE THE DARSHAN MODULE DATA IS LOCATED**, as it is unsafe to work in other directories.
+- **DO NOT CHANGE ANY SYSTEM SETTINGS**, as the user is the only one who can change system settings.
+- **NEVER DELETE ANY FILES**, as the user is the only one who can delete files.
+
+## Edge Cases:
+
+If you encounter something unexpected such as files which do not exist but should, or directories which do not exist but should, or any other unexpected behavior, you should end the analysis and describe the unexpected behavior in your summary.
+You should NEVER try to fix the unexpected behavior yourself, as the user is the only one who can fix the unexpected behavior.
+You should ALWAYS describe the unexpected behavior in your summary and let the user decide what to do.
 """
 
 
 def create_darshan_analysis_prompt(
     darshan_modules: List[str],
-    setup_code: str,
-    fs_config_description: Optional[Dict] = None
+    setup_code: str
 ) -> str:
     """
     Create a prompt for analyzing Darshan log data.
@@ -30,94 +47,36 @@ def create_darshan_analysis_prompt(
     Args:
         darshan_modules: List of Darshan module names
         setup_code: Python code that was executed to setup the environment
-        fs_config_description: Optional description of file system parameters being tuned
         
     Returns:
         Formatted prompt string
     """
-    prompt_parts = ["Here is some context before I give you the task:\n"]
-    
-    # Add tuning config context if provided
-    if fs_config_description is not None:
-        tuning_config_context = f"""
-### **Tuning Configuration:**
-
-I am trying to tune these file system parameters to achieve maximal performance on my HPC application:
-```
-{json.dumps(fs_config_description, indent=4)}
-```
-"""
-        prompt_parts.append(tuning_config_context)
-    
-    # Add Darshan modules description
-    darshan_modules_description = f"""
-### **Darshan Modules:**
-
-In order to decide which parameters to tune and how to tune them, I have run the application and traced its I/O behavior using Darshan. \
+    prompt = f"""\
+I am tuning DAOS file system parameters to achieve maximal performance on my HPC application.
+I have run the application and traced its I/O behavior using Darshan.
 The application used these Darshan modules: {darshan_modules}.
-"""
-    prompt_parts.append(darshan_modules_description)
-    
-    # Add setup code context
-    setup_code_context = f"""
-### **Environment Setup:**
 
-I have processed the Darshan log by splitting each recorded Darshan module into one dataframe and one description string. \
-Each module's description string contains information about the data columns in that module's corresponding dataframe as well as some important information about interpreting them, while the dataframe contains the actual data for the described columns.\
-There is also a string called `header` which contains the information extracted from the start of the Darshan log which describes the application's total runtime, number of processes used, etc.\
+I have processed the Darshan log by splitting each recorded Darshan module into one dataframe and one description string.
+Each module's description string contains information about the data columns in that module's corresponding dataframe as well as some important information about interpreting them, while the dataframe contains the actual data for the described columns.
+There is also a string called `header` which contains the information extracted from the start of the Darshan log which describes the application's total runtime, number of processes used, etc.
 This is the code I already ran in the environment to setup the data:
 
-```
+```python
 {setup_code}
 ```
+
+# **Your Task:**
+
+Analyze the data and provide a comprehensive summary of the I/O behavior of the application.
+To do this, you should:
+1. Inspect the dataframes and description variables to understand the data columns and what they represent.
+2. Analyze the data from the Darshan log to generate a comprehensive summary of the I/O behavior of the application.
+
+## Additional Notes:
+
 """
-    prompt_parts.append(setup_code_context)
-    
-    # Add task description
-    task_description = """
-### **Task Description:**
+    return prompt
 
- 1) Inspect the dataframes and description variables to understand the data columns and what they represent.
- 2) Then, find which unique directories are accessed by the application.
- 3) Then, you must analyze the data from the Darshan log to extract the most important information which may help guide me to tune file system parameters to improve performance of the application.
-
-"""
-    prompt_parts.append(task_description)
-    
-    # Add instruction notes
-    prompt_parts.append(ANALYSIS_INSTRUCTION_NOTES)
-    
-    return "\n".join(prompt_parts)
-
-
-def create_darshan_summary_prompt(analysis_messages: List[Dict]) -> str:
-    """
-    Create a prompt for summarizing the analysis results.
-    
-    Args:
-        analysis_messages: List of message dictionaries from the analysis chat
-        
-    Returns:
-        Formatted summary prompt string
-    """
-    # Format the analysis messages as a readable log
-    analysis_log = json.dumps(analysis_messages, indent=2)
-    
-    summary_prompt = f"""
-A user has asked an assistant to analyze a darshan log and extract any useful knowledge which may help to tune the file system parameters to improve the performance of the application which was traced using Darshan.
-The analysis consists of an initial message from the user detailing the task for the assistant, followed by a series of messages between the assistant and the CLI console where the assistant describes its analysis plan, uses the CLI to run the analysis code, and then interprets the results of the code that was run via the console's output.
-
-Here is the full log of messages documenting the analysis conducted by the assistant:
-{analysis_log}
-
-
-### **Task Description:**
-
-You must review the analysis conducted by the assistant and generate a detailed summary of all of the information the assistant discovered through the analysis process to summarize the detailed I/O behavior of the application.
-Your summary should include specific information discovered by the assistant about the application's I/O behavior which may be helpful to tune the file system parameters to improve performance of the application.
-"""
-    
-    return summary_prompt
 
 
 def create_qa_prompt(question: str, setup_code: Optional[str] = None, new_environment: bool = False) -> str:

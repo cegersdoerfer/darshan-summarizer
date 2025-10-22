@@ -8,13 +8,13 @@ of Darshan logs using LLM-based code generation and execution.
 import os
 import json
 import asyncio
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict
 from pocket_agent import PocketAgent, AgentConfig
 
 from .parser import parse_darshan_log, parse_darshan_to_csv, list_darshan_modules
 from .prompts import (
+    DARSHAN_ANALYSIS_SYSTEM_PROMPT,
     create_darshan_analysis_prompt,
-    create_darshan_summary_prompt,
     create_qa_prompt
 )
 from .code_execution_server import create_code_execution_server
@@ -23,7 +23,6 @@ from .code_execution_server import create_code_execution_server
 def init_pocket_agent(
     model: str = "gpt-4o",
     working_dir: Optional[str] = None,
-    system_prompt: Optional[str] = None,
     kernel = None
 ) -> PocketAgent:
     """
@@ -32,7 +31,6 @@ def init_pocket_agent(
     Args:
         model: LLM model to use (default: "gpt-4o")
         working_dir: Working directory for code execution
-        system_prompt: Optional system prompt for the agent
         kernel: Optional existing JupyterKernel instance
         
     Returns:
@@ -45,8 +43,7 @@ def init_pocket_agent(
     config = AgentConfig(
         llm_model=model,
         name="DarshanAnalyzer",
-        role_description="Expert at analyzing Darshan I/O profiling logs and extracting insights about application I/O behavior",
-        system_prompt=system_prompt or "You are an expert at analyzing Darshan I/O profiling logs using Python code.",
+        system_prompt=DARSHAN_ANALYSIS_SYSTEM_PROMPT,
         completion_kwargs={
             "tool_choice": "auto",
             "max_tokens": 8192
@@ -64,12 +61,12 @@ def init_pocket_agent(
 
 class DarshanSummarizerAgent:
     """
-    Agent for analyzing and summarizing Darshan I/O profiling logs.
+    Agent for analyzing Darshan I/O profiling logs.
     
-    This agent uses Open Interpreter to analyze Darshan logs by:
+    This agent uses PocketAgent to analyze Darshan logs by:
     1. Parsing the log into CSV files
     2. Using Python code execution to analyze the data
-    3. Generating insights and summaries about I/O behavior
+    3. Generating insights about I/O behavior
     """
     
     def __init__(
@@ -106,7 +103,6 @@ class DarshanSummarizerAgent:
         # State variables
         self.darshan_modules: List[str] = []
         self.analysis_result: Optional[str] = None
-        self.summary: Optional[str] = None
         
     def parse_log(self) -> str:
         """
@@ -235,65 +231,16 @@ class DarshanSummarizerAgent:
         self.analysis_result = result
         return result
     
-    def summarize(self) -> str:
-        """
-        Generate a summary of the analysis results.
-        
-        Returns:
-            Summary text
-        """
-        if not self.agent or not self.agent.messages:
-            raise RuntimeError("Must run analyze() before summarize()")
-        
-        print(f"\n{'='*60}")
-        print("STEP 3: Generating Summary")
-        print(f"{'='*60}\n")
-        
-        # Create summary prompt from the conversation history
-        summary_prompt = create_darshan_summary_prompt(self.agent.messages)
-        
-        # Create a new agent for summarization (without code execution tools)
-        summary_agent_config = AgentConfig(
-            llm_model=self.model,
-            name="Summarizer",
-            system_prompt="You are an expert at summarizing technical analyses and extracting key insights.",
-            completion_kwargs={
-                "max_tokens": 8192
-            }
-        )
-        
-        # Create a minimal MCP server for the summarization agent
-        from fastmcp import FastMCP
-        summary_mcp = FastMCP(name="summarizer")
-        
-        summary_agent = PocketAgent(
-            agent_config=summary_agent_config,
-            mcp_config=summary_mcp
-        )
-        
-        # Generate summary
-        print("Generating summary...")
-        summary = asyncio.run(summary_agent.run(summary_prompt))
-        
-        # Save summary
-        summary_file = os.path.join(self.output_dir, "summary.txt")
-        with open(summary_file, "w") as f:
-            f.write(summary)
-        print(f"✓ Summary saved to: {summary_file}")
-        
-        self.summary = summary
-        return summary
     
-    def run(self) -> Tuple[str, str]:
+    def run(self) -> str:
         """
-        Run the complete analysis pipeline: parse, analyze, and summarize.
+        Run the complete analysis pipeline: parse and analyze.
         
         Returns:
-            Tuple of (analysis_result, summary)
+            Analysis result string
         """
         self.parse_log()
         analysis_result = self.analyze()
-        summary = self.summarize()
         
         print(f"\n{'='*60}")
         print("ANALYSIS COMPLETE")
@@ -302,9 +249,8 @@ class DarshanSummarizerAgent:
         print(f"  - Data files: {len(self.darshan_modules)} CSV files + descriptions")
         print(f"  - Analysis: analysis.txt")
         print(f"  - Messages: messages.json")
-        print(f"  - Summary: summary.txt")
         
-        return analysis_result, summary
+        return analysis_result
     
     def ask_question(self, question: str, reset_conversation: bool = False) -> str:
         """
@@ -349,10 +295,6 @@ class DarshanSummarizerAgent:
         answer = asyncio.run(self.agent.run(prompt))
         
         return answer
-    
-    def get_summary(self) -> Optional[str]:
-        """Get the generated summary, if available."""
-        return self.summary
     
     def get_analysis_result(self) -> Optional[str]:
         """Get the analysis result, if available."""

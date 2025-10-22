@@ -54,11 +54,6 @@ Examples:
         default="gpt-5",
         help="LLM model to use (default: gpt-5)"
     )
-    analyze_parser.add_argument(
-        "--skip-summary",
-        action="store_true",
-        help="Skip generating the summary (only run analysis)"
-    )
     
     # Parse command
     parse_parser = subparsers.add_parser(
@@ -131,21 +126,14 @@ def run_analyze(args):
         model=args.model
     )
     
-    # Parse the log
-    agent.parse_log()
+    # Run complete analysis (parse + analyze)
+    analysis_result = agent.run()
     
-    # Run analysis
-    agent.analyze()
-    
-    # Generate summary (unless skipped)
-    if not args.skip_summary:
-        summary = agent.summarize()
-        
-        # Display summary
-        print("\n" + "="*70)
-        print("SUMMARY")
-        print("="*70 + "\n")
-        print(summary)
+    # Display analysis result
+    print("\n" + "="*70)
+    print("ANALYSIS RESULT")
+    print("="*70 + "\n")
+    print(analysis_result)
     
     print("\n" + "="*70)
     print(f"✓ Complete! Results saved to: {agent.output_dir}")
