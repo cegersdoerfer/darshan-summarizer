@@ -122,15 +122,13 @@ def run_analyze(args):
     print("="*70)
     print(f"\nLog file: {args.log_path}")
     print(f"Model: {args.model}")
-    print(f"Auto-run: {not args.no_auto_run}")
     print()
     
     # Create agent
     agent = DarshanSummarizerAgent(
         log_path=args.log_path,
         output_dir=args.output_dir,
-        model=args.model,
-        auto_run=not args.no_auto_run
+        model=args.model
     )
     
     # Parse the log

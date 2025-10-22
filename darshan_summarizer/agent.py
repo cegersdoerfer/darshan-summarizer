@@ -24,7 +24,6 @@ def init_code_interpreter(model: str = "openai/gpt-4o", auto_run: bool = True) -
     
     Args:
         model: LLM model to use (default: "openai/gpt-4o")
-        auto_run: Whether to automatically run generated code (default: True)
         
     Returns:
         Configured OpenInterpreter instance
