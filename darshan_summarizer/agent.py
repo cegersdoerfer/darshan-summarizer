@@ -1,5 +1,5 @@
 """
-Darshan log analysis agent using Open Interpreter.
+Darshan log analysis agent using PocketAgent with Jupyter kernel.
 
 This module provides the main agent class that orchestrates the analysis
 of Darshan logs using LLM-based code generation and execution.
@@ -7,8 +7,9 @@ of Darshan logs using LLM-based code generation and execution.
 
 import os
 import json
+import asyncio
 from typing import Optional, List, Dict, Tuple
-from interpreter import OpenInterpreter
+from pocket_agent import PocketAgent, AgentConfig
 
 from .parser import parse_darshan_log, parse_darshan_to_csv, list_darshan_modules
 from .prompts import (
@@ -16,26 +17,47 @@ from .prompts import (
     create_darshan_summary_prompt,
     create_qa_prompt
 )
+from .code_execution_server import create_code_execution_server
 
 
-def init_code_interpreter(model: str = "gpt-5", auto_run: bool = True) -> OpenInterpreter:
+def init_pocket_agent(
+    model: str = "gpt-4o",
+    working_dir: Optional[str] = None,
+    system_prompt: Optional[str] = None
+) -> PocketAgent:
     """
-    Initialize an Open Interpreter instance for code execution.
+    Initialize a PocketAgent instance for code execution.
     
     Args:
-        model: LLM model to use (default: "gpt-5")
+        model: LLM model to use (default: "gpt-4o")
+        working_dir: Working directory for code execution
+        system_prompt: Optional system prompt for the agent
         
     Returns:
-        Configured OpenInterpreter instance
+        Configured PocketAgent instance
     """
-    interpreter = OpenInterpreter()
-    interpreter.llm.model = model
-    interpreter.auto_run = True
-    interpreter.loop = True
-    interpreter.llm.stream = False
-    interpreter.llm.max_tokens = 8192
-    interpreter.llm.context_window = 200000
-    return interpreter
+    # Create code execution MCP server
+    mcp_server = create_code_execution_server(working_dir=working_dir)
+    
+    # Create agent config
+    config = AgentConfig(
+        llm_model=model,
+        name="DarshanAnalyzer",
+        role_description="Expert at analyzing Darshan I/O profiling logs and extracting insights about application I/O behavior",
+        system_prompt=system_prompt or "You are an expert at analyzing Darshan I/O profiling logs using Python code.",
+        completion_kwargs={
+            "tool_choice": "auto",
+            "max_tokens": 8192
+        }
+    )
+    
+    # Create and return the agent
+    agent = PocketAgent(
+        agent_config=config,
+        mcp_config=mcp_server
+    )
+    
+    return agent
 
 
 class DarshanSummarizerAgent:
@@ -52,8 +74,7 @@ class DarshanSummarizerAgent:
         self,
         log_path: str,
         output_dir: Optional[str] = None,
-        model: str = "gpt-5",
-        auto_run: bool = True,
+        model: str = "gpt-4o",
         fs_config_description: Optional[Dict] = None
     ):
         """
@@ -63,12 +84,10 @@ class DarshanSummarizerAgent:
             log_path: Path to the .darshan log file
             output_dir: Directory for analysis outputs (default: creates one based on log name)
             model: LLM model to use for analysis
-            auto_run: Whether to automatically run generated code
             fs_config_description: Optional description of file system parameters being tuned
         """
         self.log_path = log_path
         self.model = model
-        self.auto_run = auto_run
         self.fs_config_description = fs_config_description
         
         # Set up output directory
@@ -78,12 +97,12 @@ class DarshanSummarizerAgent:
         else:
             self.output_dir = output_dir
         
-        # Initialize interpreter
-        self.interpreter = init_code_interpreter(model=model, auto_run=auto_run)
+        # Agent will be initialized after parsing (when we know the working directory)
+        self.agent: Optional[PocketAgent] = None
         
         # State variables
         self.darshan_modules: List[str] = []
-        self.analysis_messages: Optional[List[Dict]] = None
+        self.analysis_result: Optional[str] = None
         self.summary: Optional[str] = None
         
     def parse_log(self) -> str:
@@ -108,16 +127,24 @@ class DarshanSummarizerAgent:
         self.darshan_modules = list_darshan_modules(self.output_dir)
         print(f"\nFound {len(self.darshan_modules)} Darshan modules")
         
+        # Initialize the agent now that we have the output directory
+        print("\nInitializing analysis agent...")
+        self.agent = init_pocket_agent(
+            model=self.model,
+            working_dir=self.output_dir
+        )
+        print("✓ Agent initialized")
+        
         return self.output_dir
     
-    def _prepare_interpreter_session(self) -> str:
+    def _prepare_setup_code(self) -> str:
         """
-        Prepare the Open Interpreter session by loading data into the environment.
+        Prepare the setup code for loading data into the environment.
         
         Returns:
-            The setup code that was executed
+            The setup code string (not executed yet)
         """
-        print("\nPreparing analysis environment...")
+        print("\nPreparing setup code...")
         
         # Build setup code
         setup_code_lines = [
@@ -141,56 +168,54 @@ class DarshanSummarizerAgent:
             setup_code_lines.append(f"{var_name}_description = open('{module_name}_description.txt', 'r').read()")
         
         setup_code = "\n".join(setup_code_lines)
-        
-        # Execute the setup code
-        self.interpreter.computer.run("python", setup_code, display=True)
-        print("✓ Environment prepared")
+        print("✓ Setup code prepared")
         
         return setup_code
     
-    def analyze(self) -> List[Dict]:
+    def analyze(self) -> str:
         """
-        Analyze the Darshan log using Open Interpreter.
+        Analyze the Darshan log using PocketAgent.
         
         Returns:
-            List of analysis messages from the conversation
+            Analysis result string
         """
         print(f"\n{'='*60}")
         print("STEP 2: Analyzing Darshan Log")
         print(f"{'='*60}\n")
         
-        # Change to output directory
-        original_dir = os.getcwd()
-        os.chdir(self.output_dir)
+        if not self.agent:
+            raise RuntimeError("Agent not initialized. Call parse_log() first.")
         
-        try:
-            # Prepare the interpreter session
-            setup_code = self._prepare_interpreter_session()
-            
-            # Create analysis prompt
-            prompt = create_darshan_analysis_prompt(
-                darshan_modules=self.darshan_modules,
-                setup_code=setup_code,
-                fs_config_description=self.fs_config_description
-            )
-            
-            print("\nStarting analysis chat...")
-            print("-" * 60)
-            
-            # Run the analysis
-            messages = self.interpreter.chat(prompt)
-            
-            # Save analysis messages
-            analysis_file = os.path.join(self.output_dir, "analysis.json")
-            with open(analysis_file, "w") as f:
-                json.dump(messages, f, indent=4)
-            print(f"\n✓ Analysis saved to: {analysis_file}")
-            
-            self.analysis_messages = messages
-            return messages
-            
-        finally:
-            os.chdir(original_dir)
+        # Prepare setup code
+        setup_code = self._prepare_setup_code()
+        
+        # Create analysis prompt
+        prompt = create_darshan_analysis_prompt(
+            darshan_modules=self.darshan_modules,
+            setup_code=setup_code,
+            fs_config_description=self.fs_config_description
+        )
+        
+        print("\nStarting analysis...")
+        print("-" * 60)
+        
+        # Run the analysis (async)
+        result = asyncio.run(self.agent.run(prompt))
+        
+        # Save analysis result
+        analysis_file = os.path.join(self.output_dir, "analysis.txt")
+        with open(analysis_file, "w") as f:
+            f.write(result)
+        print(f"\n✓ Analysis saved to: {analysis_file}")
+        
+        # Also save the full conversation history
+        messages_file = os.path.join(self.output_dir, "messages.json")
+        with open(messages_file, "w") as f:
+            json.dump(self.agent.messages, f, indent=4)
+        print(f"✓ Conversation history saved to: {messages_file}")
+        
+        self.analysis_result = result
+        return result
     
     def summarize(self) -> str:
         """
@@ -199,22 +224,38 @@ class DarshanSummarizerAgent:
         Returns:
             Summary text
         """
-        if self.analysis_messages is None:
+        if not self.agent or not self.agent.messages:
             raise RuntimeError("Must run analyze() before summarize()")
         
         print(f"\n{'='*60}")
         print("STEP 3: Generating Summary")
         print(f"{'='*60}\n")
         
-        # Create summary prompt
-        summary_prompt = create_darshan_summary_prompt(self.analysis_messages)
+        # Create summary prompt from the conversation history
+        summary_prompt = create_darshan_summary_prompt(self.agent.messages)
         
-        # Generate summary using the interpreter's LLM
+        # Create a new agent for summarization (without code execution tools)
+        summary_agent_config = AgentConfig(
+            llm_model=self.model,
+            name="Summarizer",
+            system_prompt="You are an expert at summarizing technical analyses and extracting key insights.",
+            completion_kwargs={
+                "max_tokens": 8192
+            }
+        )
+        
+        # Create a minimal MCP server for the summarization agent
+        from fastmcp import FastMCP
+        summary_mcp = FastMCP(name="summarizer")
+        
+        summary_agent = PocketAgent(
+            agent_config=summary_agent_config,
+            mcp_config=summary_mcp
+        )
+        
+        # Generate summary
         print("Generating summary...")
-        messages = self.interpreter.chat(summary_prompt, reset=True)
-        
-        # Extract the summary from the last message
-        summary = messages[-1]["content"] if messages else "No summary generated"
+        summary = asyncio.run(summary_agent.run(summary_prompt))
         
         # Save summary
         summary_file = os.path.join(self.output_dir, "summary.txt")
@@ -225,15 +266,15 @@ class DarshanSummarizerAgent:
         self.summary = summary
         return summary
     
-    def run(self) -> Tuple[List[Dict], str]:
+    def run(self) -> Tuple[str, str]:
         """
         Run the complete analysis pipeline: parse, analyze, and summarize.
         
         Returns:
-            Tuple of (analysis_messages, summary)
+            Tuple of (analysis_result, summary)
         """
         self.parse_log()
-        self.analyze()
+        analysis_result = self.analyze()
         summary = self.summarize()
         
         print(f"\n{'='*60}")
@@ -241,49 +282,53 @@ class DarshanSummarizerAgent:
         print(f"{'='*60}")
         print(f"\nResults saved to: {self.output_dir}")
         print(f"  - Data files: {len(self.darshan_modules)} CSV files + descriptions")
-        print(f"  - Analysis: analysis.json")
+        print(f"  - Analysis: analysis.txt")
+        print(f"  - Messages: messages.json")
         print(f"  - Summary: summary.txt")
         
-        return self.analysis_messages, summary
+        return analysis_result, summary
     
-    def ask_question(self, question: str, load_new_environment: bool = True) -> str:
+    def ask_question(self, question: str, reset_conversation: bool = False) -> str:
         """
         Ask a question about the Darshan log data.
         
         Args:
             question: The question to answer
-            load_new_environment: Whether to reload the data environment (default: True)
+            reset_conversation: Whether to reset the conversation history (default: False)
             
         Returns:
             The answer to the question
         """
-        original_dir = os.getcwd()
+        if not self.agent:
+            raise RuntimeError("Agent not initialized. Call parse_log() first.")
         
-        try:
-            if load_new_environment:
-                # Change to output directory and setup environment
-                os.chdir(self.output_dir)
-                setup_code = self._prepare_interpreter_session()
-                prompt = create_qa_prompt(question, setup_code, new_environment=True)
-            else:
-                prompt = create_qa_prompt(question, new_environment=False)
-            
-            # Ask the question
-            messages = self.interpreter.chat(prompt)
-            
-            # Extract the answer
-            answer = messages[-1]["content"] if messages else "No answer generated"
-            return answer
-            
-        finally:
-            if load_new_environment:
-                os.chdir(original_dir)
+        # If resetting, create a new agent
+        if reset_conversation:
+            self.agent = init_pocket_agent(
+                model=self.model,
+                working_dir=self.output_dir
+            )
+            setup_code = self._prepare_setup_code()
+            prompt = create_qa_prompt(question, setup_code, new_environment=True)
+        else:
+            prompt = create_qa_prompt(question, new_environment=False)
+        
+        # Ask the question
+        answer = asyncio.run(self.agent.run(prompt))
+        
+        return answer
     
     def get_summary(self) -> Optional[str]:
         """Get the generated summary, if available."""
         return self.summary
     
-    def get_analysis_messages(self) -> Optional[List[Dict]]:
-        """Get the analysis messages, if available."""
-        return self.analysis_messages
+    def get_analysis_result(self) -> Optional[str]:
+        """Get the analysis result, if available."""
+        return self.analysis_result
+    
+    def get_conversation_messages(self) -> Optional[List[Dict]]:
+        """Get the conversation messages, if available."""
+        if self.agent:
+            return self.agent.messages
+        return None
 

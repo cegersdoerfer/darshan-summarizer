@@ -1,13 +1,10 @@
 # Core dependencies
-tiktoken==0.7.0
-open-interpreter>=0.4.3
+pocket-agent==0.2.23
 pandas>=2.2.3
 numpy>=2.2.2
 tqdm>=4.67.1
 
-# For LLM integration (Open Interpreter uses these)
-openai>=1.59.8
-
-# Optional: for better output formatting
-rich>=13.9.4
+# Jupyter kernel for code execution
+jupyter-client>=8.0.0
+ipykernel>=6.20.0
 
