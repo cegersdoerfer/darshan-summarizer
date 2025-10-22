@@ -206,8 +206,7 @@ class DarshanSummarizerAgent:
         # Create analysis prompt
         prompt = create_darshan_analysis_prompt(
             darshan_modules=self.darshan_modules,
-            setup_code=setup_code,
-            fs_config_description=self.fs_config_description
+            setup_code=setup_code
         )
         
         print("Starting analysis...")
