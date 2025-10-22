@@ -1,0 +1,12 @@
+# Core dependencies
+open-interpreter>=0.2.0
+pandas>=2.0.0
+numpy>=1.24.0
+tqdm>=4.65.0
+
+# For LLM integration (Open Interpreter uses these)
+openai>=1.0.0
+
+# Optional: for better output formatting
+rich>=13.0.0
+
