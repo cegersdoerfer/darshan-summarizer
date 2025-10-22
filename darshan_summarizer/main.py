@@ -24,7 +24,7 @@ Examples:
   darshan-summarizer analyze my_app.darshan --output-dir ./results
   
   # Analyze with custom model
-  darshan-summarizer analyze my_app.darshan --model openai/gpt-4o
+  darshan-summarizer analyze my_app.darshan --model gpt-5
   
   # Just parse the log to CSV (no analysis)
   darshan-summarizer parse my_app.darshan --output-dir ./parsed_data
@@ -51,8 +51,8 @@ Examples:
     )
     analyze_parser.add_argument(
         "-m", "--model",
-        default="openai/gpt-5",
-        help="LLM model to use (default: openai/gpt-4o)"
+        default="gpt-5",
+        help="LLM model to use (default: gpt-5)"
     )
     analyze_parser.add_argument(
         "--skip-summary",
@@ -89,8 +89,8 @@ Examples:
     )
     question_parser.add_argument(
         "-m", "--model",
-        default="openai/gpt-4o",
-        help="LLM model to use (default: openai/gpt-4o)"
+        default="gpt-5",
+        help="LLM model to use (default: gpt-5)"
     )
     
     args = parser.parse_args()

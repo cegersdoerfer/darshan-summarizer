@@ -18,12 +18,12 @@ from .prompts import (
 )
 
 
-def init_code_interpreter(model: str = "openai/gpt-4o", auto_run: bool = True) -> OpenInterpreter:
+def init_code_interpreter(model: str = "gpt-5", auto_run: bool = True) -> OpenInterpreter:
     """
     Initialize an Open Interpreter instance for code execution.
     
     Args:
-        model: LLM model to use (default: "openai/gpt-4o")
+        model: LLM model to use (default: "gpt-5")
         
     Returns:
         Configured OpenInterpreter instance
@@ -52,7 +52,7 @@ class DarshanSummarizerAgent:
         self,
         log_path: str,
         output_dir: Optional[str] = None,
-        model: str = "openai/gpt-4o",
+        model: str = "gpt-5",
         auto_run: bool = True,
         fs_config_description: Optional[Dict] = None
     ):
