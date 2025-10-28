@@ -201,7 +201,7 @@ def run_question(args):
     print("-"*70 + "\n")
     
     # Ask the question
-    answer = agent.ask_question(args.question, load_new_environment=True)
+    answer = agent.ask_question(args.question, reset_conversation=True)
     
     print("\n" + "="*70)
     print("ANSWER")
